@@ -275,6 +275,8 @@ clean_dev_python() {
     safe_clean ~/.cache/tensorflow/* "TensorFlow cache"
     clean_conda_metadata_caches
     safe_clean ~/.cache/wandb/* "Weights & Biases cache"
+    safe_clean ~/Library/Application\ Support/virtualenv/wheel/* "virtualenv seed wheel cache"
+    safe_clean ~/Library/Application\ Support/virtualenv/unzip/* "virtualenv seed unzip cache"
 }
 # Go build/module caches.
 clean_dev_go() {
@@ -409,6 +411,13 @@ clean_dev_docker() {
         debug_log "Docker daemon-managed cleanup skipped by default"
     fi
     safe_clean ~/.docker/buildx/cache/* "Docker BuildX cache"
+    if command -v podman > /dev/null 2>&1; then
+        note_activity
+        echo -e "  ${GRAY}${ICON_WARNING}${NC} Podman unused data · skipped by default"
+        echo -e "  ${GRAY}${ICON_REVIEW}${NC} ${GRAY}Review: podman system df${NC}"
+        echo -e "  ${GRAY}${ICON_REVIEW}${NC} ${GRAY}Prune:  podman system prune --filter until=720h${NC}"
+        debug_log "Podman daemon-managed cleanup skipped by default"
+    fi
 }
 # Nix garbage collection.
 clean_dev_nix() {
@@ -1251,6 +1260,69 @@ clean_dev_ai_agents() {
     done
 }
 
+# GitKraken CLI old versions (keep active symlink target + most recent).
+clean_dev_gitkraken_cli() {
+    local versions_root="$HOME/Library/Application Support/GitKrakenCLI/versions"
+    [[ -d "$versions_root" ]] || return 0
+
+    local active_symlink="$HOME/Library/Application Support/GitKrakenCLI/gk"
+    local keep_previous="${MOLE_AI_AGENTS_KEEP:-1}"
+    [[ "$keep_previous" =~ ^[0-9]+$ ]] || keep_previous=1
+
+    local active_path=""
+    if [[ -L "$active_symlink" ]]; then
+        local target
+        target=$(readlink "$active_symlink" 2> /dev/null || true)
+        if [[ -n "$target" ]]; then
+            local entry
+            for entry in "$versions_root"/*; do
+                [[ -e "$entry" ]] || continue
+                case "$target/" in
+                    "$entry"/*)
+                        active_path="$entry"
+                        break
+                        ;;
+                esac
+            done
+        fi
+    fi
+
+    local -a entries=()
+    while IFS= read -r -d '' entry; do
+        local name
+        name=$(basename "$entry")
+        [[ "$name" == .* ]] && continue
+        entries+=("$entry")
+    done < <(command find "$versions_root" -mindepth 1 -maxdepth 1 -type d -print0 2> /dev/null)
+
+    [[ ${#entries[@]} -le "$keep_previous" ]] && return 0
+
+    local -a sorted=()
+    while IFS= read -r line; do
+        sorted+=("${line#* }")
+    done < <(
+        for entry in "${entries[@]}"; do
+            local mtime
+            mtime=$(stat -f%m "$entry" 2> /dev/null || echo "0")
+            printf '%s %s\n' "$mtime" "$entry"
+        done | sort -rn
+    )
+
+    local idx=0
+    for target in "${sorted[@]}"; do
+        if [[ -n "$active_path" && "$target" == "$active_path" ]]; then
+            continue
+        fi
+        if [[ $idx -lt $keep_previous ]]; then
+            idx=$((idx + 1))
+            continue
+        fi
+        safe_clean "$target" "GitKraken CLI old version"
+        note_activity
+        idx=$((idx + 1))
+    done
+}
+
 # Other language tool caches.
 clean_dev_other_langs() {
     safe_clean ~/.composer/cache/* "PHP Composer cache (legacy)"
@@ -1451,11 +1523,50 @@ clean_dev_misc() {
     [[ -d "$HOME/.local/share/cursor-agent" ]] && safe_find_delete "$HOME/.local/share/cursor-agent" "*.log" "$MOLE_LOG_AGE_DAYS" "f"
     # Playwright cached browser binaries
     safe_clean ~/Library/Caches/ms-playwright/* "Playwright browsers"
+    # Playwright Go browser cache (Go variant of ms-playwright)
+    safe_clean ~/.cache/ms-playwright-go/* "Playwright Go browser cache"
+    # Chrome DevTools MCP browser profile cache
+    safe_clean ~/.cache/chrome-devtools-mcp/chrome-profile/* "Chrome DevTools MCP cache"
+    # Solana CLI platform-tools cache (rebuild on install)
+    safe_clean ~/.cache/solana/* "Solana CLI cache"
+    # PyInstaller bootloader binary cache (rebuild on next package)
+    safe_clean ~/Library/Application\ Support/pyinstaller/bincache*/* "PyInstaller bootloader cache"
+    # ChromaDB embedding model cache (large ML models, review only)
+    if [[ -d ~/.cache/chroma ]]; then
+        local chroma_kb
+        chroma_kb=$(get_path_size_kb ~/.cache/chroma 2> /dev/null || echo 0)
+        if [[ "$chroma_kb" -gt 102400 ]]; then
+            local chroma_human
+            chroma_human=$(bytes_to_human "$((chroma_kb * 1024))")
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} ChromaDB model cache: ${GREEN}${chroma_human}${NC}${GRAY}, Path: ~/.cache/chroma${NC}"
+            note_activity
+        fi
+    fi
+    # OpenCode session storage (chat history, user decision)
+    if [[ -d ~/.local/share/opencode/storage ]]; then
+        local oc_storage_kb
+        oc_storage_kb=$(get_path_size_kb ~/.local/share/opencode/storage 2> /dev/null || echo 0)
+        if [[ "$oc_storage_kb" -gt 102400 ]]; then
+            local oc_human
+            oc_human=$(bytes_to_human "$((oc_storage_kb * 1024))")
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} OpenCode session data: ${GREEN}${oc_human}${NC}${GRAY}, Path: ~/.local/share/opencode/storage${NC}"
+            note_activity
+        fi
+    fi
     # Claude Code state under ~/.claude can include persistent memory,
     # plugin registry data, hooks, and session context. Do not clean it
     # automatically; users can remove specific paths manually if needed.
     # Wondershare orphan installer payload (bundle ID differs from live app)
     safe_clean ~/Library/Application\ Support/com.wondershare.Installer/* "Wondershare installer payload"
+    # Chromium browser snapshot downloads (standalone Chromium binaries)
+    safe_clean ~/.chromium-browser-snapshots/* "Chromium browser snapshots"
+    # CodeNexus AI tool cache and logs (orphan-safe: check binary first)
+    if [[ -d ~/.codenexus ]] && ! command -v codenexus > /dev/null 2>&1; then
+        safe_clean ~/.codenexus/cache/* "CodeNexus cache"
+        safe_clean ~/.codenexus/log/* "CodeNexus logs"
+    fi
+    # ScmClient (Tencent iOA) logs
+    safe_clean ~/Library/Logs/ScmClient/* "ScmClient logs"
 }
 # Shell and VCS leftovers.
 clean_dev_shell() {
@@ -1548,6 +1659,7 @@ clean_developer_tools() {
     clean_dev_jetbrains_toolbox
     clean_dev_jetbrains_logs
     clean_dev_ai_agents
+    clean_dev_gitkraken_cli
     clean_dev_other_langs
     clean_dev_cicd
     clean_dev_database

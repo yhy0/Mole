@@ -925,6 +925,92 @@ clean_app_caches() {
     fi
 
     clean_group_container_caches
+    clean_webkit_app_caches
+}
+
+# WebKit WebsiteData cleanup for non-Apple apps.
+# ~/Library/WebKit/<bundle_id>/WebsiteData/ stores web content caches for apps
+# using WKWebView. These are regenerated automatically on next use.
+# The uninstall module already knows about this directory (app_protection.sh)
+# but mo clean did not scan it.
+clean_webkit_app_caches() {
+    local webkit_dir="$HOME/Library/WebKit"
+    [[ -d "$webkit_dir" ]] || return 0
+
+    start_section_spinner "Scanning WebKit app caches..."
+
+    local total_size=0
+    local cleaned_count=0
+    local found_any=false
+
+    local _ng_state
+    _ng_state=$(shopt -p nullglob || true)
+    shopt -s nullglob
+
+    for app_dir in "$webkit_dir"/*/; do
+        [[ -d "$app_dir" ]] || continue
+        [[ -L "$app_dir" ]] && continue
+
+        local bundle_id="${app_dir%/}"
+        bundle_id="${bundle_id##*/}"
+
+        # Skip Apple system components
+        [[ "$bundle_id" == com.apple.* ]] && continue
+
+        if is_critical_system_component "$bundle_id" 2> /dev/null; then
+            continue
+        fi
+        if should_protect_data "$bundle_id" 2> /dev/null; then
+            continue
+        fi
+
+        local ws_dir="$app_dir/WebsiteData"
+        [[ -d "$ws_dir" ]] || continue
+
+        if is_path_whitelisted "$ws_dir" 2> /dev/null; then
+            continue
+        fi
+
+        local size_kb
+        size_kb=$(get_path_size_kb "$ws_dir" 2> /dev/null || echo 0)
+        [[ "$size_kb" =~ ^[0-9]+$ ]] || size_kb=0
+        [[ "$size_kb" -gt 0 ]] || continue
+
+        found_any=true
+        total_size=$((total_size + size_kb))
+        cleaned_count=$((cleaned_count + 1))
+
+        if [[ "$DRY_RUN" != "true" ]]; then
+            local _dg_state
+            _dg_state=$(shopt -p dotglob || true)
+            shopt -s dotglob
+            local item
+            for item in "$ws_dir"/*; do
+                [[ -e "$item" ]] || continue
+                safe_remove "$item" true || true
+            done
+            eval "$_dg_state"
+        fi
+    done
+
+    eval "$_ng_state"
+    stop_section_spinner
+
+    if [[ "$found_any" == "true" ]]; then
+        local size_human
+        size_human=$(bytes_to_human "$((total_size * 1024))")
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} WebKit app caches${NC}, $(colorize_human_size "$size_human") ${YELLOW}dry${NC}"
+        else
+            local line_color
+            line_color=$(cleanup_result_color_kb "$total_size")
+            echo -e "  ${line_color}${ICON_SUCCESS}${NC} WebKit app caches${NC}, ${line_color}$size_human${NC}"
+        fi
+        files_cleaned=$((files_cleaned + cleaned_count))
+        total_size_cleaned=$((total_size_cleaned + total_size))
+        total_items=$((total_items + 1))
+        note_activity
+    fi
 }
 
 # Process a single container cache directory.
@@ -1356,6 +1442,7 @@ clean_browsers() {
         local _arc_running=false
         pgrep -x "Arc" > /dev/null 2>&1 && _arc_running=true
         if [[ "$_arc_running" != "true" ]]; then
+            # Legacy layout: profiles directly under Arc/
             safe_clean ~/Library/Application\ Support/Arc/*/Code\ Cache/* "Arc code cache"
             safe_clean ~/Library/Application\ Support/Arc/*/GPUCache/* "Arc GPU cache"
             safe_clean ~/Library/Application\ Support/Arc/*/DawnCache/* "Arc Dawn cache"
@@ -1365,8 +1452,28 @@ clean_browsers() {
             safe_clean ~/Library/Application\ Support/Arc/GrShaderCache/* "Arc GR shader cache"
             safe_clean ~/Library/Application\ Support/Arc/GraphiteDawnCache/* "Arc Dawn cache"
             safe_clean ~/Library/Application\ Support/Arc/Crashpad/completed/* "Arc crash reports"
+            # New layout: profiles under Arc/User Data/
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/*/Code\ Cache/* "Arc code cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/*/GPUCache/* "Arc GPU cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/*/DawnCache/* "Arc Dawn cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/*/GrShaderCache/* "Arc GR shader cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/*/GraphiteDawnCache/* "Arc Graphite Dawn cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/ShaderCache/* "Arc shader cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/GrShaderCache/* "Arc GR shader cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/GraphiteDawnCache/* "Arc Dawn cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/component_crx_cache/* "Arc component CRX cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/extensions_crx_cache/* "Arc extensions CRX cache"
+            safe_clean ~/Library/Application\ Support/Arc/User\ Data/Crashpad/completed/* "Arc crash reports"
         fi
         for _arc_profile in "$HOME/Library/Application Support/Arc"/*/; do
+            clean_service_worker_cache "Arc" "$_arc_profile/Service Worker/CacheStorage"
+            if [[ "$_arc_running" != "true" ]]; then
+                safe_clean "$_arc_profile"/Service\ Worker/ScriptCache/* "Arc Service Worker ScriptCache"
+            fi
+        done
+        # New layout: Service Worker under Arc/User Data/*/
+        for _arc_profile in "$HOME/Library/Application Support/Arc/User Data"/*/; do
+            [[ -d "$_arc_profile" ]] || continue
             clean_service_worker_cache "Arc" "$_arc_profile/Service Worker/CacheStorage"
             if [[ "$_arc_running" != "true" ]]; then
                 safe_clean "$_arc_profile"/Service\ Worker/ScriptCache/* "Arc Service Worker ScriptCache"
@@ -1464,6 +1571,21 @@ clean_browsers() {
     clean_edge_old_versions
     clean_edge_updater_old_versions
     clean_brave_old_versions
+    # QQ Browser 3 (Chromium-based).
+    if [[ -d ~/Library/Application\ Support/QQBrowser3 ]]; then
+        safe_clean ~/Library/Caches/com.tencent.QQBrowser3/* "QQ Browser cache"
+        local _qqbrowser_running=false
+        pgrep -x "QQBrowser3" > /dev/null 2>&1 && _qqbrowser_running=true
+        if [[ "$_qqbrowser_running" != "true" ]]; then
+            safe_clean ~/Library/Application\ Support/QQBrowser3/*/Code\ Cache/* "QQ Browser code cache"
+            safe_clean ~/Library/Application\ Support/QQBrowser3/*/GPUCache/* "QQ Browser GPU cache"
+            safe_clean ~/Library/Application\ Support/QQBrowser3/ShaderCache/* "QQ Browser shader cache"
+            safe_clean ~/Library/Application\ Support/QQBrowser3/GrShaderCache/* "QQ Browser GR shader cache"
+            safe_clean ~/Library/Application\ Support/QQBrowser3/GraphiteDawnCache/* "QQ Browser Dawn cache"
+            safe_clean ~/Library/Application\ Support/QQBrowser3/component_crx_cache/* "QQ Browser component cache"
+            safe_clean ~/Library/Application\ Support/QQBrowser3/Crashpad/completed/* "QQ Browser crash reports"
+        fi
+    fi
 }
 
 # Cloud storage caches.
@@ -1517,6 +1639,7 @@ clean_office_applications() {
     safe_clean ~/Library/Caches/com.kingsoft.wpsoffice.mac "WPS Office cache"
     safe_clean ~/Library/Caches/org.mozilla.thunderbird/* "Thunderbird cache"
     safe_clean ~/Library/Caches/com.apple.mail/* "Apple Mail cache"
+    safe_clean ~/Library/Group\ Containers/UBF8T346G9.Office/FontCache/* "Microsoft Office font cache"
 }
 
 # Virtualization caches.
@@ -2097,6 +2220,8 @@ check_large_file_candidates() {
     _report_large_review_dir "pnpm store (review only)" "$HOME/Library/pnpm/store"
     _report_large_review_dir "Conda packages (review only)" "$HOME/.conda/pkgs"
     _report_large_review_dir "Anaconda packages (review only)" "$HOME/anaconda3/pkgs"
+    _report_large_review_dir "OpenCode session data (review only)" "$HOME/.local/share/opencode/storage"
+    _report_large_review_dir "ChromaDB model cache (review only)" "$HOME/.cache/chroma"
 
     if [[ "$found_any" == "false" ]]; then
         echo -e "  ${GREEN}${ICON_SUCCESS}${NC} No large items detected in common locations"

@@ -168,6 +168,22 @@ clean_code_editors() {
     safe_clean ~/Library/Caches/Zed/* "Zed cache"
     safe_clean ~/Library/Logs/Zed/* "Zed logs"
     clean_editor_obsolete_extensions
+    # CodeBuddy Extension (VS Code fork, Electron)
+    if [[ -d ~/Library/Application\ Support/CodeBuddyExtension ]]; then
+        safe_clean ~/Library/Application\ Support/CodeBuddyExtension/Cache/* "CodeBuddy Extension cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddyExtension/logs/* "CodeBuddy Extension logs"
+    fi
+    # CodeBuddy CN (VS Code fork, Electron)
+    if [[ -d ~/Library/Application\ Support/CodeBuddy\ CN ]]; then
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/Cache/* "CodeBuddy CN cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/CachedData/* "CodeBuddy CN cached data"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/CachedExtensionVSIXs/* "CodeBuddy CN extension cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/Code\ Cache/* "CodeBuddy CN code cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/GPUCache/* "CodeBuddy CN GPU cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/DawnGraphiteCache/* "CodeBuddy CN Dawn cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/DawnWebGPUCache/* "CodeBuddy CN WebGPU cache"
+        safe_clean ~/Library/Application\ Support/CodeBuddy\ CN/logs/* "CodeBuddy CN logs"
+    fi
 }
 # Communication apps.
 clean_communication_apps() {
@@ -358,6 +374,7 @@ clean_productivity_apps() {
     safe_clean ~/Library/Containers/com.ranchero.NetNewsWire-Evergreen/Data/Library/Caches/* "NetNewsWire cache"
     safe_clean ~/Library/Containers/com.ideasoncanvas.mindnode/Data/Library/Caches/* "MindNode cache"
     safe_clean ~/.cache/kaku/* "Kaku cache"
+    safe_clean ~/Library/Application\ Support/spacedrive/thumbnails/* "Spacedrive thumbnail cache"
 }
 # Music/media players (protect Spotify offline music).
 clean_media_players() {
@@ -390,6 +407,16 @@ clean_media_players() {
     safe_clean ~/Library/Caches/tv.plex.player.desktop "Plex cache"
     safe_clean ~/Library/Caches/com.netease.163music "NetEase Music cache"
     safe_clean ~/Library/Caches/com.tencent.QQMusic/* "QQ Music cache"
+    safe_clean ~/Library/Caches/com.tencent.QQMusicMac/* "QQ Music Mac cache"
+    # QQ Music Mac sandboxed container caches (protect offline downloads in iDownloadProxy).
+    local _qqmusic_container="$HOME/Library/Containers/com.tencent.QQMusicMac/Data/Library/Application Support/QQMusicMac"
+    if [[ -d "$_qqmusic_container" ]]; then
+        safe_clean "$_qqmusic_container/iRRCache"/* "QQ Music streaming cache"
+        safe_clean "$_qqmusic_container/iLog"/* "QQ Music logs"
+        safe_clean "$_qqmusic_container/iCache"/* "QQ Music cache"
+        safe_clean "$_qqmusic_container/iTemp"/* "QQ Music temp files"
+    fi
+    safe_clean ~/Library/Containers/com.tencent.QQMusicMac/Data/Library/Caches/* "QQ Music container cache"
     safe_clean ~/Library/Caches/com.kugou.mac/* "Kugou Music cache"
     safe_clean ~/Library/Caches/com.kuwo.mac/* "Kuwo Music cache"
 }
@@ -400,6 +427,13 @@ clean_video_players() {
     safe_clean ~/Library/Caches/io.mpv "MPV cache"
     safe_clean ~/Library/Caches/com.iqiyi.player "iQIYI cache"
     safe_clean ~/Library/Caches/com.tencent.tenvideo "Tencent Video cache"
+    # Tencent Video sandboxed container caches.
+    local _tenvideo_as="$HOME/Library/Containers/com.tencent.tenvideo/Data/Library/Application Support"
+    if [[ -d "$_tenvideo_as" ]]; then
+        safe_clean "$_tenvideo_as/Upgrade"/* "Tencent Video old installer"
+        safe_clean "$_tenvideo_as/VideoNative"/* "Tencent Video native cache"
+        safe_clean "$_tenvideo_as/documentCache"/* "Tencent Video document cache"
+    fi
     safe_clean ~/Library/Caches/tv.danmaku.bili/* "Bilibili cache"
     safe_clean ~/Library/Caches/com.douyu.*/* "Douyu cache"
     safe_clean ~/Library/Caches/com.huya.*/* "Huya cache"
@@ -416,6 +450,69 @@ clean_download_managers() {
     safe_clean ~/Library/Caches/com.downie.Downie-* "Downie cache"
     safe_clean ~/Library/Caches/com.folx.*/* "Folx cache"
     safe_clean ~/Library/Caches/com.charlessoft.pacifist/* "Pacifist cache"
+    clean_neatdm_stale_segments
+}
+# Neat Download Manager: clean stale incomplete download segments.
+# History database (NeatDB.db) is never touched; only numbered segment
+# directories whose seg.x0 file is older than MOLE_ORPHAN_AGE_DAYS are removed.
+# Download URLs expire within hours/days so 30-day-old segments cannot be resumed.
+clean_neatdm_stale_segments() {
+    local neatdm_dir="$HOME/Library/Application Support/com.NeatDownloadManager"
+    [[ -d "$neatdm_dir" ]] || return 0
+
+    local stale_count=0
+    local stale_kb=0
+    local current_epoch
+    current_epoch=$(get_epoch_seconds)
+
+    local -a stale_dirs=()
+    local seg_dir
+    for seg_dir in "$neatdm_dir"/*/; do
+        [[ -d "$seg_dir" ]] || continue
+        [[ -f "$seg_dir/seg.x0" ]] || continue
+
+        local seg_mtime
+        seg_mtime=$(get_file_mtime "$seg_dir/seg.x0")
+        local age_days=$(((current_epoch - seg_mtime) / 86400))
+
+        if [[ $age_days -ge ${MOLE_ORPHAN_AGE_DAYS:-30} ]]; then
+            stale_dirs+=("$seg_dir")
+        fi
+    done
+
+    [[ ${#stale_dirs[@]} -eq 0 ]] && return 0
+
+    for seg_dir in "${stale_dirs[@]}"; do
+        local size_kb
+        size_kb=$(get_path_size_kb "$seg_dir")
+        [[ "$size_kb" =~ ^[0-9]+$ ]] || size_kb=0
+
+        if [[ "$DRY_RUN" != "true" ]]; then
+            if safe_remove "$seg_dir" true; then
+                stale_count=$((stale_count + 1))
+                stale_kb=$((stale_kb + size_kb))
+            fi
+        else
+            stale_count=$((stale_count + 1))
+            stale_kb=$((stale_kb + size_kb))
+        fi
+    done
+
+    if [[ $stale_count -gt 0 ]]; then
+        local size_human
+        size_human=$(bytes_to_human "$((stale_kb * 1024))")
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} NeatDM stale downloads · ${stale_count} items, $(colorize_human_size "$size_human") ${YELLOW}dry${NC}"
+        else
+            local line_color
+            line_color=$(cleanup_result_color_kb "$stale_kb")
+            echo -e "  ${line_color}${ICON_SUCCESS}${NC} NeatDM stale downloads · ${stale_count} items, ${line_color}${size_human}${NC}"
+        fi
+        files_cleaned=$((files_cleaned + stale_count))
+        total_size_cleaned=$((total_size_cleaned + stale_kb))
+        total_items=$((total_items + 1))
+        note_activity
+    fi
 }
 # Gaming platforms.
 clean_gaming_platforms() {
