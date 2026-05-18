@@ -1525,8 +1525,10 @@ clean_dev_misc() {
     safe_clean ~/Library/Caches/ms-playwright/* "Playwright browsers"
     # Playwright Go browser cache (Go variant of ms-playwright)
     safe_clean ~/.cache/ms-playwright-go/* "Playwright Go browser cache"
-    # Chrome DevTools MCP browser profile cache
-    safe_clean ~/.cache/chrome-devtools-mcp/chrome-profile/* "Chrome DevTools MCP cache"
+    # Chrome DevTools MCP browser profile cache (skip while MCP server is running)
+    if ! pgrep -f "chrome-devtools-mcp" > /dev/null 2>&1; then
+        safe_clean ~/.cache/chrome-devtools-mcp/chrome-profile/* "Chrome DevTools MCP cache"
+    fi
     # Solana CLI platform-tools cache (rebuild on install)
     safe_clean ~/.cache/solana/* "Solana CLI cache"
     # PyInstaller bootloader binary cache (rebuild on next package)
