@@ -1560,11 +1560,6 @@ clean_dev_misc() {
     safe_clean ~/Library/Application\ Support/com.wondershare.Installer/* "Wondershare installer payload"
     # Chromium browser snapshot downloads (standalone Chromium binaries)
     safe_clean ~/.chromium-browser-snapshots/* "Chromium browser snapshots"
-    # CodeNexus AI tool cache and logs (orphan-safe: check binary first)
-    if [[ -d ~/.codenexus ]] && ! command -v codenexus > /dev/null 2>&1; then
-        safe_clean ~/.codenexus/cache/* "CodeNexus cache"
-        safe_clean ~/.codenexus/log/* "CodeNexus logs"
-    fi
     # ScmClient (Tencent iOA) logs
     safe_clean ~/Library/Logs/ScmClient/* "ScmClient logs"
 }
