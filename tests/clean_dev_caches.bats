@@ -671,3 +671,39 @@ EOF
     [[ "$output" == *"Flutter build cache (.dart_tool)"* ]]
     [[ "$output" == *"Flutter build cache (build/)"* ]]
 }
+
+@test "clean_dev_misc includes Chrome DevTools MCP cache when server not running" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+pgrep() { return 1; }
+safe_clean() { echo "$2"; }
+safe_find_delete() { :; }
+clean_dev_misc
+EOF
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Chrome DevTools MCP cache"* ]]
+}
+
+@test "clean_dev_misc skips Chrome DevTools MCP cache when server is running" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+pgrep() { return 0; }
+safe_clean() { echo "$2"; }
+safe_find_delete() { :; }
+clean_dev_misc
+EOF
+
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Chrome DevTools MCP cache"* ]]
+}

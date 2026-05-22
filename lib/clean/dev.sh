@@ -1516,6 +1516,10 @@ clean_dev_misc() {
     [[ -d "$HOME/.local/share/cursor-agent" ]] && safe_find_delete "$HOME/.local/share/cursor-agent" "*.log" "$MOLE_LOG_AGE_DAYS" "f"
     # Playwright cached browser binaries
     safe_clean ~/Library/Caches/ms-playwright/* "Playwright browsers"
+    # Chrome DevTools MCP browser profile cache (skip while MCP server is running)
+    if ! pgrep -f "chrome-devtools-mcp" > /dev/null 2>&1; then
+        safe_clean ~/.cache/chrome-devtools-mcp/chrome-profile/* "Chrome DevTools MCP cache"
+    fi
     # Claude Code state under ~/.claude can include persistent memory,
     # plugin registry data, hooks, and session context. Do not clean it
     # automatically; users can remove specific paths manually if needed.
