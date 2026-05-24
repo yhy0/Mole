@@ -469,6 +469,9 @@ clean_neatdm_stale_segments() {
     local seg_dir
     for seg_dir in "$neatdm_dir"/*/; do
         [[ -d "$seg_dir" ]] || continue
+        local seg_name
+        seg_name=$(basename "${seg_dir%/}")
+        [[ "$seg_name" =~ ^[0-9]+$ ]] || continue
         [[ -f "$seg_dir/seg.x0" ]] || continue
 
         local seg_mtime

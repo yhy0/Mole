@@ -647,6 +647,28 @@ EOF
     [[ "$output" != *"NeatDM stale downloads"* ]]
 }
 
+@test "clean_neatdm_stale_segments skips non-numeric segment-like directories" {
+    local neatdm_dir="$HOME/Library/Application Support/com.NeatDownloadManager"
+    rm -rf "$neatdm_dir"
+    mkdir -p "$neatdm_dir/history-backup"
+    touch "$neatdm_dir/history-backup/seg.x0"
+    touch -t "$(date -v-31d '+%Y%m%d%H%M.%S')" "$neatdm_dir/history-backup/seg.x0"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" DRY_RUN=true /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/app_caches.sh"
+note_activity() { :; }
+files_cleaned=0
+total_size_cleaned=0
+total_items=0
+clean_neatdm_stale_segments
+EOF
+
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"NeatDM stale downloads"* ]]
+}
+
 @test "clean_neatdm_stale_segments skips when directory absent" {
     rm -rf "$HOME/Library/Application Support/com.NeatDownloadManager"
 
